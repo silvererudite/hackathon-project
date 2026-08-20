@@ -25,6 +25,20 @@ export ANTHROPIC_API_KEY=sk-ant-...
 Without a key, `run_agent(live=False)` replays the highest-rated human
 trajectory so the notebook still produces the full analysis.
 
+### BlueBEAR (University of Birmingham HPC)
+
+For local GPU inference on BlueBEAR with Slurm:
+
+```bash
+cp config.env.example config.env   # set SLURM_ACCOUNT + HF_HOME
+bash download_data.sh
+bash submit.sh --smoke-test
+bash submit.sh
+```
+
+See [BLUEBEAR.md](BLUEBEAR.md) for model choice, account setup, and troubleshooting.
+Default model: **Qwen/Qwen2.5-7B-Instruct** (tool-calling agent loop; not TinyLlama).
+
 ## Layout
 
 ```

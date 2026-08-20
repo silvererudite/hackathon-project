@@ -82,6 +82,7 @@ class Context:
     """
     data: pd.DataFrame
     replication: pd.DataFrame | None = None
+    data_meta: dict | None = None
     p_careless: np.ndarray | None = None
     selector_metrics: dict | None = None
     queried: list = field(default_factory=list)
@@ -92,23 +93,80 @@ class Context:
         return result
 
 
+def resolve_data_dirs(root: Path | str = HERE) -> tuple[Path, Path | None]:
+    """Find directories containing metrics.csv + scores.csv.
+
+    Note: data/correlates_common_subjects.csv is handled separately in load_context().
+    """
+    root = Path(root)
+
+    def _has_pair(directory: Path) -> bool:
+        return (directory / "metrics.csv").is_file() and (directory / "scores.csv").is_file()
+
+    def _replication_for(orig: Path) -> Path | None:
+        for candidate in (orig / "replication", root / "data" / "replication",
+                          root / "02_Replication" / "data"):
+            if _has_pair(candidate):
+                return candidate
+        return None
+
+    if env := os.environ.get("SCIOPS_DATA_DIR"):
+        orig = Path(env)
+        if not _has_pair(orig):
+            raise FileNotFoundError(
+                f"SCIOPS_DATA_DIR={orig} must contain metrics.csv and scores.csv")
+        return orig, _replication_for(orig)
+
+    flat = root / "data"
+    if _has_pair(flat):
+        return flat, _replication_for(flat)
+
+    orig = root / "01_Original" / "data"
+    if _has_pair(orig):
+        return orig, _replication_for(orig)
+
+    raise FileNotFoundError(
+        "No metrics.csv + scores.csv found. Options:\n"
+        f"  1. Put them in {flat} or {orig}\n"
+        f"  2. Put {flat / 'correlates_common_subjects.csv'} (partial analysis only)\n"
+        "  3. Run bash download_data.sh for full SCI OPS data\n"
+        "  4. Set SCIOPS_DATA_DIR")
+
+
 def load_context(root: Path | str = HERE, sample: str = "01_Original") -> Context:
     """Load participant-level data: quality metrics joined to symptom scores."""
+    from data_loader import find_correlates_csv, load_correlates
+
     root = Path(root)
-    d = root / sample / "data"
-    metrics = pd.read_csv(d / "metrics.csv")
-    scores = pd.read_csv(d / "scores.csv")
+    correlates = find_correlates_csv(root)
+    if correlates is not None:
+        try:
+            orig_dir, _ = resolve_data_dirs(root)
+        except FileNotFoundError:
+            df, meta = load_correlates(correlates)
+            return Context(data=df, replication=None, data_meta=meta)
+
+    sample_dir = root / sample / "data"
+    if sample != "01_Original" and (sample_dir / "metrics.csv").is_file():
+        orig_dir = sample_dir
+        rep_dir = root / "02_Replication" / "data"
+        rep_dir = rep_dir if (rep_dir / "metrics.csv").is_file() else None
+    else:
+        orig_dir, rep_dir = resolve_data_dirs(root)
+
+    metrics = pd.read_csv(orig_dir / "metrics.csv")
+    scores = pd.read_csv(orig_dir / "scores.csv")
     df = metrics.merge(scores, on=["platform", "subject"], how="inner")
     df["careless"] = (df["infreq"] > 0).astype(int)
 
     rep = None
-    rep_dir = root / "02_Replication" / "data"
-    if rep_dir.exists():
+    if rep_dir is not None:
         rm = pd.read_csv(rep_dir / "metrics.csv")
         rs = pd.read_csv(rep_dir / "scores.csv")
         rep = rm.merge(rs, on=["platform", "subject"], how="inner")
         rep["careless"] = (rep["infreq"] > 0).astype(int)
-    return Context(data=df, replication=rep)
+    return Context(data=df, replication=rep,
+                     data_meta={"format": "sciops", "source": str(orig_dir)})
 
 
 CTX: Context | None = None
@@ -149,14 +207,39 @@ def inspect_data() -> dict:
            if x not in ("platform", "subject", "careless") + tuple(FEATURES)
            and not x.startswith(BANNED) and not x.endswith("_rt")
            and not x.startswith("p_careless")]
-    return c.record("inspect_data", {
+    behaviours = [b for b in ("accuracy", "wsls", "task_rt") if b in d.columns]
+    out = {
         "n_participants": int(len(d)),
-        "attention_check_failure_rate": round(float(d["careless"].mean()), 3),
         "symptom_scales": sym,
-        "behaviour_measures": ["accuracy", "wsls", "task_rt"],
+        "behaviour_measures": behaviours or ["accuracy", "wsls", "task_rt"],
         "permissible_selector_features": FEATURES,
         "note": "infrequency items define the target and are banned as features",
-    })
+    }
+    if c.data_meta:
+        out["data_format"] = c.data_meta.get("format")
+        out["data_source"] = c.data_meta.get("source")
+        if c.data_meta.get("limitations"):
+            out["limitations"] = c.data_meta["limitations"]
+    if "careless" in d.columns:
+        out["attention_check_failure_rate"] = round(float(d["careless"].mean()), 3)
+    else:
+        out["attention_check_failure_rate"] = None
+        out["note"] = "No attention-check label in this dataset; quality-selection tools unavailable."
+    return c.record("inspect_data", out)
+
+
+def _quality_data_error(c: Context) -> dict | None:
+    if c.data_meta and c.data_meta.get("format") == "correlates_common_subjects":
+        return {
+            "error": "correlates_common_subjects.csv lacks quality metrics and infreq",
+            "hint": "Run bash download_data.sh for metrics.csv + scores.csv, or use "
+                    "compare_policies with policy=all_data only",
+            "limitations": c.data_meta.get("limitations", []),
+        }
+    missing = [f for f in FEATURES + ["infreq"] if f not in c.data.columns]
+    if missing:
+        return {"error": f"missing columns for quality model: {missing}"}
+    return None
 
 
 def train_quality_selector() -> dict:
@@ -164,6 +247,8 @@ def train_quality_selector() -> dict:
     using only permissible features. Returns AUROC, Brier score, and how many
     participants land in the ambiguous band."""
     c = _ctx()
+    if err := _quality_data_error(c):
+        return c.record("train_quality_selector", err)
     d = c.data
     pipe = Pipeline([("impute", SimpleImputer(strategy="median")),
                      ("scale", StandardScaler()),
@@ -196,6 +281,10 @@ def test_association(symptom: str, behaviour: str = "accuracy",
     """
     c = _ctx()
     d = c.data
+    if policy == "oracle_clean" and "careless" not in d.columns:
+        return c.record("test_association", {
+            "error": "oracle_clean requires infreq/careless labels not present in this dataset",
+        })
     if symptom not in d.columns:
         return {"error": f"unknown symptom {symptom!r}",
                 "available": [x for x in d.columns if x not in FEATURES][:12]}
@@ -636,7 +725,7 @@ def _make_dispatch():
             return json.dumps(err)
         kwargs = {k: v for k, v in args.items()
                   if k not in ("phase", "thought", "confidence", "revision_trigger")}
-        return fn(args.get("phase", "execution") or "inspect",
+        return fn(args.get("phase") or "revision",
                   args.get("thought", "") or "(none given)",
                   args.get("confidence"),
                   args.get("revision_trigger") or None,
@@ -650,8 +739,9 @@ def run_agent(task: str = DEFAULT_TASK, *, live: bool | None = None,
               trajectory_id: str | None = None, backend: str = "auto"):
     """Run the reactive loop and return a Trajectory with its full process trace.
 
-    backend: "auto" | "aitta" | "anthropic" | "scripted".
-      auto  -> aitta if AITTA_API_KEY is set, else anthropic if
+    backend: "auto" | "aitta" | "anthropic" | "transformers" | "scripted".
+      auto  -> transformers if BLUEBEAR_LLM/TRANSFORMERS_BACKEND is set, else
+               aitta if AITTA_API_KEY is set, else anthropic if
                ANTHROPIC_API_KEY is set, else scripted.
     live:  False forces the scripted path; True/None defer to `backend`.
     """
@@ -667,6 +757,8 @@ def run_agent(task: str = DEFAULT_TASK, *, live: bool | None = None,
         model = model or B.AITTA_MODEL
     elif chosen == "anthropic":
         model = model or B.ANTHROPIC_MODEL
+    elif chosen == "transformers":
+        model = model or B.TRANSFORMERS_MODEL
     else:
         model = model or "scripted"
 
@@ -700,6 +792,32 @@ def run_agent(task: str = DEFAULT_TASK, *, live: bool | None = None,
                                for s_ in TRACE.trace], indent=1)[:10000]
         try:
             TRACE.outcome = B.aitta_structured(
+                system,
+                f"Task: {task}\n\nYour analysis produced these observations:\n{observed}\n\n"
+                f"Your narrative conclusion was:\n{chr(10).join(transcript)[:3000]}\n\n"
+                "Report the outcome. Ground every number in the observations above. "
+                "Be explicit about what you could NOT determine.",
+                Outcome, model=model)
+        except Exception as exc:
+            if verbose:
+                print(f"\n[structured output failed: {exc}]")
+                print("[trace is still complete; outcome left unset]")
+        TRACE.recompute_metadata()
+        TRACE.metadata.wall_time_seconds = round(time.time() - t0, 2)
+        if verbose and TRACE.outcome:
+            print(f"\n{'=' * 68}\n{TRACE.outcome.final_claim}")
+        return TRACE
+
+    if chosen == "transformers":
+        transcript, turns = B.run_transformers_loop(
+            task, system, _make_dispatch(), model=model,
+            max_steps=max_steps, verbose=verbose)
+        if turns >= max_steps:
+            TRACE.metadata.max_steps_reached = True
+        observed = json.dumps([{"action": s_.action.tool, "observation": s_.observation}
+                               for s_ in TRACE.trace], indent=1)[:10000]
+        try:
+            TRACE.outcome = B.transformers_structured(
                 system,
                 f"Task: {task}\n\nYour analysis produced these observations:\n{observed}\n\n"
                 f"Your narrative conclusion was:\n{chr(10).join(transcript)[:3000]}\n\n"
@@ -805,10 +923,11 @@ def _scripted(task: str, verbose: bool = True):
         "replication", "Does the inclusion policy itself generalise?", 0.7))
 
     by = cmp["by_policy"]
+    policy_rs = ", ".join(f"{k} r={v['r']:+.3f}" for k, v in by.items())
     claim = (
         f"The gad7-accuracy association is {cmp['verdict'].replace('-', ' ').lower()}: "
         f"r moves {cmp['r_spread']:.3f} across policies "
-        f"({', '.join(f'{k} r={v['r']:+.3f}' for k, v in by.items())}). "
+        f"({policy_rs}). "
         f"On all data it is significant and negative; under oracle-clean it "
         f"vanishes. The learned policy reaches r={by.get('agent_hard', {}).get('r', float('nan')):+.3f} "
         f"without ever seeing the label. Selector AUROC {sel['auroc']} with "
