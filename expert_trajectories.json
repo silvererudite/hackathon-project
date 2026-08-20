@@ -1,0 +1,83 @@
+{
+  "_README": "Human-rated expert trajectories over the SCI OPS tool set. Each is a sequence of tool calls a human analyst made (or would make), rated 1-5 by a domain expert, with the reason. Positive AND negative examples: the low-rated ones are real analysis failure modes, and showing an agent a rated failure teaches more than an instruction not to fail. Loaded by sciops_agent.build_system_prompt() and injected as few-shot guidance. ADD YOUR OWN: rate trajectories your team runs, keep the schema, and the agent improves without any code change.",
+  "_schema": {
+    "id": "string", "rating": "1-5 (5 = exemplary, 1 = seriously flawed)",
+    "rater": "who rated it", "label": "short name",
+    "steps": "[{action, args, why}]", "critique": "what the rating is for"
+  },
+  "trajectories": [
+    {
+      "id": "traj_expert_01",
+      "rating": 5,
+      "rater": "domain expert (cognitive science)",
+      "label": "Establish measurement quality before testing any hypothesis",
+      "steps": [
+        {"action": "inspect_data", "args": {}, "why": "Find out what scales exist and how bad the attention-check failure rate is before forming any expectation."},
+        {"action": "train_quality_selector", "args": {}, "why": "Quantify how well quality can be predicted from permissible features. AUROC and calibration both matter because the probabilities get used as weights."},
+        {"action": "compare_policies", "args": {"symptom": "gad7", "behaviour": "accuracy"}, "why": "Test the association under every defensible policy at once. A single policy cannot tell you whether a result is selection-sensitive."},
+        {"action": "check_replication", "args": {"symptom": "anxiety", "behaviour": "accuracy"}, "why": "Independent sample. Matched gad7 to anxiety on construct because the scales differ, and said so."}
+      ],
+      "critique": "Quality first, hypothesis second. Compared all policies rather than picking one. Went to the replication sample and was explicit that the construct match is approximate rather than pretending the scales are identical."
+    },
+    {
+      "id": "traj_expert_02",
+      "rating": 5,
+      "rater": "domain expert (cognitive science)",
+      "label": "Refuse to conclude when the selector is ambiguous",
+      "steps": [
+        {"action": "inspect_data", "args": {}, "why": "Baseline."},
+        {"action": "train_quality_selector", "args": {}, "why": "Check whether inclusion is actually decidable from the data."},
+        {"action": "request_quality_labels", "args": {"budget": 20}, "why": "About a third of participants sit in the ambiguous band. Buying labels there is worth more than any downstream modelling choice."},
+        {"action": "compare_policies", "args": {"symptom": "gad7", "behaviour": "accuracy"}, "why": "Only now test, and report the residual uncertainty alongside the estimate."}
+      ],
+      "critique": "The best trajectory in the set. Recognised that an AUROC near 0.75 with 31% of participants in the ambiguous band does not license a confident inclusion decision, and spent budget instead of proceeding. This is the behaviour that distinguishes a research agent from an automated pipeline."
+    },
+    {
+      "id": "traj_expert_03",
+      "rating": 4,
+      "rater": "methods reviewer",
+      "label": "Multiple outcomes, honest about multiplicity",
+      "steps": [
+        {"action": "inspect_data", "args": {}, "why": "Enumerate the scales."},
+        {"action": "train_quality_selector", "args": {}, "why": "Standard."},
+        {"action": "compare_policies", "args": {"symptom": "gad7", "behaviour": "accuracy"}, "why": "Primary."},
+        {"action": "compare_policies", "args": {"symptom": "7d", "behaviour": "accuracy"}, "why": "Secondary, declared as exploratory."},
+        {"action": "compare_policies", "args": {"symptom": "bas", "behaviour": "accuracy"}, "why": "Negative control -- no strong prior reason to expect an effect."}
+      ],
+      "critique": "Good use of a negative control. Marked down slightly because testing several outcomes without adjusting or pre-registering invites selective reporting, even when each test is run correctly."
+    },
+    {
+      "id": "traj_fail_01",
+      "rating": 1,
+      "rater": "methods reviewer",
+      "label": "Test first, stop on significance",
+      "steps": [
+        {"action": "test_association", "args": {"symptom": "gad7", "behaviour": "accuracy", "policy": "all_data"}, "why": "Went straight for the headline result."},
+        {"action": "check_replication", "args": {"symptom": "anxiety", "behaviour": "accuracy"}, "why": "Declared the finding replicated."}
+      ],
+      "critique": "The failure this whole project exists to catch. Tested on unfiltered data, got p < 0.05, and stopped. Never trained a selector, never compared policies. The gad7-accuracy association is exactly one that DISAPPEARS once inattentive participants are removed, so this trajectory reports a spurious effect with full confidence. Never do this."
+    },
+    {
+      "id": "traj_fail_02",
+      "rating": 2,
+      "rater": "domain expert (cognitive science)",
+      "label": "Trusts an uncalibrated selector",
+      "steps": [
+        {"action": "train_quality_selector", "args": {}, "why": "Trained it."},
+        {"action": "test_association", "args": {"symptom": "gad7", "behaviour": "accuracy", "policy": "agent_hard"}, "why": "Applied a hard 0.5 threshold and reported the result as clean."}
+      ],
+      "critique": "Better than traj_fail_01 -- at least quality was modelled. But a hard threshold on a probability that is poorly separated throws away the uncertainty that is the entire point, and reporting one policy hides that the answer moves. Should have used compare_policies, or weighted rather than thresholded."
+    },
+    {
+      "id": "traj_fail_03",
+      "rating": 1,
+      "rater": "methods reviewer",
+      "label": "Leakage via the target",
+      "steps": [
+        {"action": "train_quality_selector", "args": {}, "why": "Proposed adding the infrequency item scores as selector features to 'improve accuracy'."},
+        {"action": "compare_policies", "args": {"symptom": "gad7", "behaviour": "accuracy"}, "why": "Reported near-perfect quality classification."}
+      ],
+      "critique": "The infrequency items DEFINE the target. Using them as features means the classifier reads the answer off the label, AUROC goes to ~1.0, and the number is meaningless. If a selector suddenly looks near-perfect, suspect leakage before celebrating."
+    }
+  ]
+}

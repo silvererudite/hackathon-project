@@ -1,0 +1,22 @@
+# Data — re-fetch from the SCI OPS repo (see README)
+01_Original/
+02_Replication/
+
+# SECRETS — never commit. Aitta/Anthropic tokens go in the shell env,
+# not in a file inside the repo.
+text.txt
+*.token
+.env
+*.key
+
+# Papers — not ours to redistribute; the OpenDiscoveryTrace submission is
+# anonymous and under review. Cite it, don't ship it.
+*.pdf
+
+# Recorded runs (regenerate by using the notebook)
+traces/
+
+# Python / Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/

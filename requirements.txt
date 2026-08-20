@@ -1,0 +1,18 @@
+# Core analysis (already in ../.venv)
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+
+# Notebook
+jupyter
+ipykernel
+
+# Notebook widgets (section 6 interactive input)
+ipywidgets>=8
+pydantic>=2
+
+# LLM backends for the agent loop. Neither is needed for backend="scripted".
+openai>=1.60        # AITTA (CSC) -- OpenAI-compatible endpoint. DEFAULT.
+anthropic>=0.122    # optional alternative backend
