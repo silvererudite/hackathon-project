@@ -56,18 +56,57 @@ def txt(s, x, y, w, h, runs, *, size=14, bold=False, color=INK, font=DISP,
     return tb
 
 
+_FONT = "/System/Library/Fonts/Helvetica.ttc"
+_LINE = 1.42          # line-height multiple, matches txt(line=1.3) rendering
+
+
+def wrapped_lines(text, width_in, size_pt, bold=False):
+    """How many lines this string really takes at this width and size.
+
+    Measured with actual font metrics rather than a characters-per-line guess.
+    The guess is what put the Main results column through the footer bar: it
+    under-counted a 3-line bullet as 2 and the whole column drifted down.
+    """
+    from PIL import ImageFont
+    f = ImageFont.truetype(_FONT, int(size_pt * 4))
+    limit = width_in * 72 * 4
+    lines, cur = 0, ""
+    for word in text.split():
+        trial = (cur + " " + word).strip()
+        if f.getlength(trial) * (1.06 if bold else 1.0) > limit and cur:
+            lines += 1
+            cur = word
+        else:
+            cur = trial
+    return lines + (1 if cur else 0)
+
+
+def bullets_height(items, w, *, size=13, gap=0.055):
+    """Total height these bullets will occupy -- call before laying out."""
+    total = 0
+    for lvl, t in items:
+        sz = size if lvl == 0 else size - 1
+        iw = w - (0.24 if lvl == 0 else 0.55)
+        total += wrapped_lines(t, iw, sz, bold=(lvl == 0)) * (sz / 72 * _LINE) + gap
+    return total
+
+
 def bullets(s, x, y, w, items, *, size=13, gap=0.055):
-    """items: (level, text). Level 0 gets a rule marker, level 1 an en dash."""
+    """items: (level, text). Level 0 gets a marker, level 1 an en dash.
+    Each row is given exactly the height its text measures."""
     cy = y
     for lvl, t in items:
+        sz = size if lvl == 0 else size - 1
+        iw = w - (0.24 if lvl == 0 else 0.55)
+        n = wrapped_lines(t, iw, sz, bold=(lvl == 0))
+        h = n * (sz / 72 * _LINE)
         if lvl == 0:
             box(s, x, cy + 0.085, 0.085, 0.085, FLAG)
-            tb = txt(s, x + 0.24, cy, w - 0.24, 0.4, t, size=size, bold=True, color=INK)
+            txt(s, x + 0.24, cy, iw, h, t, size=sz, bold=True, color=INK)
         else:
-            txt(s, x + 0.30, cy, 0.18, 0.3, "–", size=size - 1, color=MUTED, font=MONO)
-            tb = txt(s, x + 0.55, cy, w - 0.55, 0.4, t, size=size - 1, color=INK2)
-        est = max(1, int(len(t) / (w * 10.5 / (size / 13))))
-        cy += est * (size / 72 * 1.42) + gap
+            txt(s, x + 0.30, cy, 0.18, 0.3, "\u2013", size=sz, color=MUTED, font=MONO)
+            txt(s, x + 0.55, cy, iw, h, t, size=sz, color=INK2)
+        cy += h + gap
     return cy
 
 
@@ -126,23 +165,23 @@ box(s, 8.55, 0.72, 3.95, 1.28, CARD, line=RULE)
 s.shapes.add_picture(f"{IMG}/s3_2.png", Inches(8.63), Inches(0.79), width=Inches(3.8))
 
 # our five condition matrices
-txt(s, 0.9, 2.22, 6, 0.25, "Ours — five data conditions",
+txt(s, 0.9, 2.16, 6, 0.25, "Ours — five data conditions",
     size=9, font=MONO, color=MUTED, space=1.3, caps=True)
 labels = ["baseline", "test 2", "test 3", "test 4", "test 5"]
 files = ["s3_3.png", "s3_4.png", "s3_5.png", "s3_6.png", "s3_7.png"]
 x, w, gap = 0.9, 2.28, 0.11
 for i, (f, lab) in enumerate(zip(files, labels)):
     cx = x + i * (w + gap)
-    box(s, cx, 2.52, w, 1.62, CARD, line=RULE)
-    s.shapes.add_picture(f"{IMG}/{f}", Inches(cx + 0.05), Inches(2.57), width=Inches(w - 0.10))
-    txt(s, cx, 4.19, w, 0.25, lab, size=8.5, font=MONO, color=MUTED,
+    box(s, cx, 2.44, w, 1.56, CARD, line=RULE)
+    s.shapes.add_picture(f"{IMG}/{f}", Inches(cx + 0.05), Inches(2.49), width=Inches(w - 0.10))
+    txt(s, cx, 4.04, w, 0.25, lab, size=8.5, font=MONO, color=MUTED,
         align=PP_ALIGN.CENTER, caps=True, space=1.1)
 
-box(s, 0.9, 4.62, 11.55, 0.02, RULE)
+box(s, 0.9, 4.38, 11.55, 0.02, RULE)
 
 # two text columns
-txt(s, 0.9, 4.86, 5.5, 0.3, "Main results", size=15, bold=True, color=INK)
-bullets(s, 0.9, 5.22, 5.5, [
+txt(s, 0.9, 4.58, 5.5, 0.3, "Main results", size=15, bold=True, color=INK)
+bullets(s, 0.9, 4.94, 5.5, [
     (1, "As expected, LLM needed more than summary information from the data to "
         "exclude participants"),
     (1, "As in paper, trial-level information from survey was more useful than "
@@ -151,8 +190,8 @@ bullets(s, 0.9, 5.22, 5.5, [
         "exclusions than the paper"),
 ], size=11.5, gap=0.04)
 
-txt(s, 7.0, 4.86, 5.45, 0.3, "Next steps", size=15, bold=True, color=INK)
-bullets(s, 7.0, 5.22, 5.45, [
+txt(s, 7.0, 4.58, 5.45, 0.3, "Next steps", size=15, bold=True, color=INK)
+bullets(s, 7.0, 4.94, 5.45, [
     (1, "Ground truth – paper, AI, or something else?"),
     (1, "What kinds of processes did the LLM engage in and what information did it use"),
     (1, "Repeating process for other data reliability problems"),
