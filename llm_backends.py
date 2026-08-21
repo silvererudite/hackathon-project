@@ -152,14 +152,21 @@ def resolve(prefer: str | None = None) -> str:
     return "scripted"
 
 
-def aitta_client():
+def aitta_client(timeout: float = 120.0, max_retries: int = 1):
+    """Aitta client.
+
+    The SDK defaults to a 600s timeout with 2 retries -- up to 30 minutes of
+    apparent hang on a model that is cold-starting or not actually up. We cap
+    it much lower so a stuck model fails fast and says so.
+    """
     import openai
     key = os.environ.get("AITTA_API_KEY")
     if not key:
         raise RuntimeError(
             "AITTA_API_KEY is not set. Get a token at https://aitta-auth.csc.fi/myToken "
             "then:  export AITTA_API_KEY='...'")
-    return openai.OpenAI(api_key=key, base_url=AITTA_BASE_URL)
+    return openai.OpenAI(api_key=key, base_url=AITTA_BASE_URL,
+                         timeout=timeout, max_retries=max_retries)
 
 
 def list_aitta_models() -> list[str]:

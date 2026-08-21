@@ -14,12 +14,18 @@ def probe(models=None) -> int:
     deployment has tool parsing switched on, and that is invisible until you
     try. A model that answers in prose here cannot drive the agent loop.
     """
-    client = B.aitta_client()
+    import time
+    timeout = float(os.environ.get("AITTA_TIMEOUT", "60"))
+    client = B.aitta_client(timeout=timeout, max_retries=0)
     tools = B.openai_tools()[:1]
     models = models or B.AITTA_TOOL_MODELS
-    print(f"probing {len(models)} models for tool calling...\n")
+    print(f"probing {len(models)} models for tool calling "
+          f"({timeout:.0f}s timeout each)\n", flush=True)
     ok = []
     for m in models:
+        # print BEFORE the call, so a hang shows you which model is stuck
+        print(f"  ...        {m}", end="\r", flush=True)
+        t0 = time.time()
         try:
             r = client.chat.completions.create(
                 model=m, max_tokens=300, tools=tools, tool_choice="auto",
@@ -30,12 +36,20 @@ def probe(models=None) -> int:
                 args = json.loads(calls[0].function.arguments or "{}")
                 missing = [k for k in ("phase", "thought", "confidence") if k not in args]
                 flag = f"  (omitted {missing})" if missing else ""
-                print(f"  TOOLS OK   {m}{flag}")
+                print(f"  TOOLS OK   {m}  ({time.time()-t0:.1f}s){flag}", flush=True)
                 ok.append(m)
             else:
-                print(f"  prose only {m}  <- cannot drive the loop")
+                print(f"  prose only {m}  ({time.time()-t0:.1f}s) <- cannot drive the loop",
+                      flush=True)
         except Exception as exc:
-            print(f"  FAILED     {m}  ({type(exc).__name__}: {str(exc)[:70]})")
+            name = type(exc).__name__
+            hint = ""
+            if "Timeout" in name or "timeout" in str(exc).lower():
+                hint = "  <- cold start or not deployed; raise AITTA_TIMEOUT to retry"
+            elif "404" in str(exc) or "NotFound" in name:
+                hint = "  <- not served under this exact id"
+            print(f"  FAILED     {m}  ({time.time()-t0:.1f}s, {name}: {str(exc)[:60]}){hint}",
+                  flush=True)
     if ok:
         print(f"\nUsable: {', '.join(ok)}")
         print(f"Default {B.AITTA_MODEL}"
