@@ -73,10 +73,13 @@ def trace_html(traj) -> str:
                     padding:6px 10px;margin:6px 0;background:rgba(127,127,127,.06)">
           <div style="font-size:11px;opacity:.75">
             step {s.step_id} &middot; <b>{_esc(s.phase)}</b> &middot;
-            {_esc(s.action.tool or s.action.type)} &middot; conf {conf} &middot;
+            {_esc(s.action.type.replace('_', ' '))} &middot; conf {conf} &middot;
             {s.wall_time or 0:.2f}s
           </div>
           <div style="margin:4px 0;font-style:italic">{_esc(s.thought)}</div>
+          <details style="margin:5px 0"><summary style="font-size:11px;cursor:pointer">
+            generated Python</summary><pre style="font-size:10px;white-space:pre-wrap;overflow:auto">
+{_esc(s.action.input or '')}</pre></details>
           <div style="font-size:11px;font-family:monospace;opacity:.8">
             {_esc((s.observation or '')[:260])}</div>
           {err}{rev}
@@ -85,7 +88,7 @@ def trace_html(traj) -> str:
     o = traj.outcome
     head = (f"<b>{_esc(traj.trajectory_id)}</b><br>"
             f"<span style='font-size:12px;opacity:.8'>{m.total_steps} steps &middot; "
-            f"{m.total_tool_calls} tool calls &middot; {m.total_failures} errors &middot; "
+            f"{m.total_code_executions} code executions &middot; {m.total_failures} errors &middot; "
             f"{m.total_revisions} revisions &middot; {m.wall_time_seconds}s &middot; "
             f"model {_esc(m.model_version)}</span>")
     tail = ""
@@ -137,7 +140,9 @@ def ask(on_done=None):
     backend = widgets.Dropdown(
         options=[(f"auto  (-> {auto})", "auto"),
                  ("aitta  (CSC, needs AITTA_API_KEY)", "aitta"),
+                 ("openai  (config.py or OPENAI_API_KEY)", "openai"),
                  ("anthropic  (needs ANTHROPIC_API_KEY)", "anthropic"),
+                 ("huggingface  (local model)", "huggingface"),
                  ("scripted  (no key)", "scripted")],
         value="auto", description="backend:", style={"description_width": "70px"},
         layout=widgets.Layout(width="46%"))

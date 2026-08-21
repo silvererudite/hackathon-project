@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Run the SCI OPS code-generating ReAct agent and inspect every decision, program, observation, and conclusion.">
+  <title>SCI OPS · Agent Trace Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#">SCI OPS <span>Agent Trace Studio</span></a>
+    <div class="top-actions">
+      <span class="local-badge"><i></i> Local workspace</span>
+      <button class="ghost-button" id="toolLibraryButton" type="button">Runtime policy</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">AUDITABLE RESEARCH AGENT</p>
+      <h1>Watch the analysis<br><em>reason in code.</em></h1>
+      <p class="lede">Ask a research question and watch a tool-free ReAct agent write, execute, inspect, and revise its own Python analysis.</p>
+    </section>
+
+    <section class="workspace">
+      <aside class="composer panel">
+        <div class="panel-heading">
+          <span class="step-number">01</span>
+          <div><p class="label">Research question</p><h2>Set the investigation</h2></div>
+        </div>
+        <label class="field-label" for="prompt">Prompt</label>
+        <textarea id="prompt" rows="9">Compute absolute Spearman rank correlations between columns 2 to 8 and columns 9 to 17 in correlates_common_subjects.csv. Run two-sided significance tests at p &lt; 0.05 without multiple-comparison correction, and plot significant correlations in a matrix.</textarea>
+        <div class="settings-grid">
+          <label><span>Backend</span><select id="backend"><option value="auto">Auto</option><option value="openai">OpenAI</option><option value="scripted">Scripted · no API</option><option value="aitta">Aitta</option><option value="anthropic">Anthropic</option><option value="huggingface">Hugging Face · local</option></select></label>
+          <label><span>Maximum turns</span><input id="maxSteps" type="number" min="1" max="25" value="12"></label>
+        </div>
+        <button class="run-button" id="runButton" type="button"><span>Run investigation</span><b>→</b></button>
+        <p class="helper">Live model runs may use API credits. Every completed run is saved under <code>traces/</code>.</p>
+      </aside>
+
+      <section class="run-area">
+        <div class="run-header">
+          <div><p class="label">Live execution</p><h2 id="runTitle">Ready for a question</h2></div>
+          <div class="status ready" id="status"><i></i><span>READY</span></div>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+          <div class="orbit"><span></span></div>
+          <h3>Your trace will appear here</h3>
+          <p>Each decision is captured with its phase, rationale, confidence, generated Python, raw observation, errors, revisions, and duration.</p>
+        </div>
+
+        <div class="execution hidden" id="execution">
+          <section class="terminal-wrap">
+            <div class="terminal-head"><span>LIVE STREAM</span><span id="streamCount">0 events</span></div>
+            <pre id="terminal" aria-live="polite"></pre>
+          </section>
+          <section class="summary hidden" id="summary"></section>
+          <div class="trace-heading hidden" id="traceHeading"><div><p class="label">Process trace</p><h2>Every exploration step</h2></div><span id="stepCount"></span></div>
+          <section class="timeline" id="timeline"></section>
+          <section class="conclusion hidden" id="conclusion"></section>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="drawer-backdrop hidden" id="drawerBackdrop"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head"><div><p class="label">Execution boundary</p><h2>Generated-code runtime</h2></div><button id="closeDrawer" aria-label="Close runtime policy">×</button></div>
+    <p class="drawer-intro">The model receives no tools or function schemas. These are the exact ReAct loop and restricted executor used to validate and run generated Python.</p>
+    <div id="toolList" class="tool-list"><p class="muted">Loading runtime…</p></div>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>
