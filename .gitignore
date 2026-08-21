@@ -8,6 +8,7 @@ text.txt
 *.token
 .env
 *.key
+config.env
 
 # Papers — not ours to redistribute; the OpenDiscoveryTrace submission is
 # anonymous and under review. Cite it, don't ship it.
@@ -15,6 +16,13 @@ text.txt
 
 # Recorded runs (regenerate by using the notebook)
 traces/
+
+# BlueBEAR Slurm logs and run artifacts (regenerate via submit.sh)
+logs/*.out
+logs/*.err
+logs/*.stats
+outputs/*.json
+outputs/*.txt
 
 # Python / Jupyter
 __pycache__/
