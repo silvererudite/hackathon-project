@@ -98,7 +98,22 @@ correlation matrix figure.
 **Caption:** *"25 of 63 correlations look significant. After excluding the 85
 participants who failed attention checks: 11."*
 
-### Shot 5 — why the trace matters  *(2:20–3:00)*  ← the ending
+### Shot 5 — human vs agent  *(2:20–2:45)*  ← the comparison
+
+**On screen:** a terminal, side-by-side trajectories on the same task.
+
+```bash
+python compare_trajectories.py test5     # same path
+python compare_trajectories.py test4     # diverges
+```
+
+**Caption:** *"The same five analytical steps a careful analyst takes. On test 5
+the agent walks all of them. On test 4 it skips one — and still writes the
+conclusion as though it hadn't."*
+
+The `!` markers and the red `not done` at step 4 are the frame to hold on.
+
+### Shot 6 — why the trace matters  *(2:45–3:00)*  ← the ending
 
 Switch to a terminal or your editor and show a saved trace where the agent
 claimed an exclusion it never performed:

@@ -583,14 +583,24 @@ def chat_json(
 
     if backend == "anthropic":
         import anthropic
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        client = anthropic.Anthropic()      # resolves ANTHROPIC_API_KEY or a saved profile
         system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
         conversation = [m for m in messages if m["role"] != "system"]
+
+        # NOTE: `temperature` is REMOVED on Claude Opus 5 / Sonnet 5 / the 4.7+
+        # family -- passing it returns a 400, so it is deliberately not sent.
+        # Adaptive thinking replaces the old fixed thinking budget.
         response = client.messages.create(
-            model=model, system=system, messages=conversation,
-            temperature=temperature, max_tokens=max_tokens,
+            model=model,
+            system=system + "\n\nRespond with a single JSON object and nothing else.",
+            messages=conversation,
+            max_tokens=max_tokens,
+            thinking={"type": "adaptive"},
         )
-        text = "".join(block.text for block in response.content if block.type == "text")
+        if response.stop_reason == "refusal":
+            raise RuntimeError("Claude declined this request "
+                               f"({(response.stop_details or {}) and getattr(response.stop_details, 'category', '?')})")
+        text = "".join(b.text for b in response.content if b.type == "text")
         return json.loads(_strip_json_fence(text))
 
     if backend == "huggingface":

@@ -152,10 +152,95 @@ s.shapes.add_picture(f"{IMG}/s2_1.png", Inches(8.0), Inches(2.5), width=Inches(4
 txt(s, 7.85, 4.98, 4.6, 0.3, "Zorowitz et al. (2023)",
     size=9.5, font=MONO, color=MUTED, align=PP_ALIGN.CENTER, caps=True, space=1.2)
 
-# ===================================================== SLIDE 3
+
+
+# ===================================================== METHODS (inserted as slide 3)
+def build_methods(prs, BLANK):
+    s = prs.slides.add_slide(BLANK); bg(s)
+    box(s, 0, 0, 0.11, 7.5, FLAG)
+    txt(s, 0.9, 0.34, 6, 0.3, "02", size=11, font=MONO, color=MUTED, space=1.6)
+    txt(s, 0.9, 0.64, 8, 0.7, "Methods", size=34, bold=True, color=INK)
+    txt(s, 0.9, 1.30, 11.6, 0.35,
+        "One prompt, one fixed correlation table, five levels of evidence. "
+        "Only what the agent can learn about data quality changes.",
+        size=13.5, color=INK2)
+
+    # ---- the pipeline, left ----
+    txt(s, 0.9, 1.92, 5.6, 0.25, "Pipeline", size=10, font=MONO,
+        color=MUTED, space=1.3, caps=True)
+    stages = [
+        ("Prompt", "63 Spearman correlations, two-sided, p < 0.05, uncorrected. "
+                   "Plus: exclude subjects that induce spurious correlations."),
+        ("Agent", "Writes and executes its own Python. Free to inspect, revise, "
+                  "and re-run; nothing about the order is fixed."),
+        ("Trace", "9 fields per step: phase, thought, action, observation, error, "
+                  "revision trigger, confidence, id, timestamp."),
+        ("Score", "Compared against a deterministic reference analysis, and "
+                  "against what the agent's own conclusion claimed."),
+    ]
+    y = 2.24
+    for i, (name, body) in enumerate(stages):
+        box(s, 0.9, y, 0.30, 0.30, INK)
+        txt(s, 0.9, y + 0.055, 0.30, 0.25, str(i + 1), size=12, bold=True,
+            color=PAPER, font=MONO, align=PP_ALIGN.CENTER)
+        txt(s, 1.34, y + 0.01, 5.2, 0.25, name, size=13, bold=True, color=INK)
+        n = wrapped_lines(body, 5.05, 10.5)
+        txt(s, 1.34, y + 0.28, 5.05, n * 0.21, body, size=10.5, color=INK2, line=1.25)
+        y += 0.34 + n * 0.20 + 0.20
+        if i < len(stages) - 1:
+            txt(s, 1.02, y - 0.30, 0.3, 0.2, "\u2193", size=11, color=RULE, font=MONO)
+
+    # ---- conditions table, right ----
+    txt(s, 7.0, 1.92, 5.45, 0.25, "Five conditions", size=10, font=MONO,
+        color=MUTED, space=1.3, caps=True)
+    rows = [
+        ("TEST 1", "\u2014", "nothing to judge quality with"),
+        ("TEST 2", "task", "accuracy, response times"),
+        ("TEST 3", "survey", "per-item responses"),
+        ("TEST 4", "task + survey", "both proxies"),
+        ("TEST 5", "+ metrics", "the study's own attention checks"),
+    ]
+    hy = 2.24
+    for h, x, w, al in (("", 7.0, 1.0, PP_ALIGN.LEFT),
+                        ("EVIDENCE ADDED", 8.05, 1.75, PP_ALIGN.LEFT),
+                        ("WHAT IT ALLOWS", 9.90, 2.55, PP_ALIGN.LEFT)):
+        if h:
+            txt(s, x, hy, w, 0.25, h, size=8.5, font=MONO, color=MUTED,
+                space=1.1, align=al)
+    box(s, 7.0, 2.50, 5.45, 0.014, INK)
+    ry = 2.62
+    for name, ev, allows in rows:
+        txt(s, 7.0, ry, 1.0, 0.28, name, size=11, bold=True, font=MONO, color=INK)
+        txt(s, 8.05, ry, 1.75, 0.28, ev, size=10.5, font=MONO, color=FLAG)
+        n = wrapped_lines(allows, 2.5, 10)
+        txt(s, 9.90, ry, 2.55, n * 0.2, allows, size=10, color=INK2, line=1.2)
+        ry += 0.44
+    box(s, 7.0, ry - 0.06, 5.45, 0.014, RULE)
+
+    txt(s, 7.0, ry + 0.14, 5.45, 0.6,
+        "Difficulty falls from TEST 1 to TEST 5. TEST 1 has no basis for exclusion "
+        "at all \u2014 declining to exclude is the correct answer there.",
+        size=10, color=MUTED, line=1.3)
+
+    # ---- controls footer ----
+    fy = 6.28
+    box(s, 0.9, fy, 11.55, 0.9, CARD, line=RULE)
+    box(s, 0.9, fy, 0.05, 0.9, FLAG)
+    txt(s, 1.14, fy + 0.14, 11.1, 0.25, "Controls", size=10.5, bold=True, color=INK)
+    txt(s, 1.14, fy + 0.40, 11.1, 0.4,
+        "Correlations always run on the same 386-subject table, so n is identical "
+        "in every condition  \u00b7  the study's own attention-check labels are held "
+        "out and used only to score exclusions  \u00b7  the reference analysis is "
+        "deterministic (scipy), no model involved.",
+        size=10, color=INK2, line=1.3)
+
+
+# ===================================================== SLIDE 3 (RESULTS)
+build_methods(prs, BLANK)
+
 s = prs.slides.add_slide(BLANK); bg(s)
 box(s, 0, 0, 0.11, 7.5, TEAL)
-txt(s, 0.9, 0.34, 6, 0.3, "02", size=11, font=MONO, color=MUTED, space=1.6)
+txt(s, 0.9, 0.34, 6, 0.3, "03", size=11, font=MONO, color=MUTED, space=1.6)
 txt(s, 0.9, 0.64, 6, 0.7, "Results", size=34, bold=True, color=INK)
 
 # reference figure, right

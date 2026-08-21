@@ -70,6 +70,10 @@ ActionType = Literal["tool_call", "code_execution", "reasoning", "conclude"]
 
 class Action(BaseModel):
     type: ActionType
+    # Which tool ran. Dropped during a merge, and because pydantic ignores
+    # unknown kwargs by default the tool name was silently discarded on every
+    # step rather than raising -- traces looked complete and were not.
+    tool: Optional[str] = None
     input: Optional[str] = None
     output: Optional[str] = None
 
