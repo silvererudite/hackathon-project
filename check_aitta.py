@@ -2,7 +2,6 @@
 """Verify Aitta connectivity and ordinary JSON/code generation."""
 from __future__ import annotations
 
-import json
 import os
 import sys
 
