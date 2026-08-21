@@ -30,3 +30,7 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 figures/
+
+# macOS / archives
+.DS_Store
+*.zip
