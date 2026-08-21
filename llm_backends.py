@@ -128,14 +128,24 @@ TOOL_SPECS = [
                             "description": "multiple-comparison correction"}},
             ["dataset"])),
     ("flag_careless_subjects",
-     "Identify subjects whose responses look careless and return their ids for "
-     "exclude_subjects. Uses the study's attention-check count where available, "
-     "otherwise derives straight-lining from per-item survey responses. Returns "
-     "an error if the dataset supports neither -- that is a real answer, not a "
-     "failure to work around.",
-     _annot({"dataset": DATASET,
-             "method": {"type": "string", "enum": ["auto", "infreq", "survey"]}},
-            ["dataset"])),
+     "Identify subjects whose responses look careless, using ONLY the supporting "
+     "tables available in this condition. Returns subject ids for "
+     "exclude_subjects, the evidence behind each signal, and how good each proxy "
+     "is against the study's own attention checks where those exist. If no "
+     "supporting tables are available there is no basis to exclude anyone -- "
+     "that is the correct answer, not a failure.",
+     _annot({"support_tables": {"type": "array",
+                                "items": {"type": "string",
+                                          "enum": ["task_data", "survey_data",
+                                                   "metrics_data"]},
+                                "description": "the supporting tables this "
+                                               "condition provides; empty means none"},
+             "strategy": {"type": "string", "enum": ["best", "union"],
+                          "description": "best: use the strongest evidence "
+                                         "available; union: drop anyone any "
+                                         "signal flags"},
+             "dataset": DATASET},
+            ["support_tables"])),
     ("plot_correlation_matrix",
      "Plot the most recent correlation_sweep for a dataset as a matrix with "
      "non-significant cells greyed out. Run correlation_sweep first.",

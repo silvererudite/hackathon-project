@@ -55,19 +55,22 @@ TEST_PROMPT = (
     f"Plot significant correlations in a matrix using {TOOL_REF}."
 )
 
+# v2: correlations ALWAYS on correlates_common_subjects (386 rows, one per
+# subject), so n is identical in every condition. The supporting tables are
+# evidence for exclusion only and never enter a correlation.
 CONDITIONS = {
-    "baseline": ("BASELINE", BASELINE_PROMPT, "correlates_common_subjects"),
-    "test1":    ("TEST 1",   TEST_PROMPT,     "correlates_common_subjects"),
-    "test2":    ("TEST 2",   TEST_PROMPT,     "correlates_with_task_data"),
-    "test3":    ("TEST 3",   TEST_PROMPT,     "correlates_with_survey_data"),
-    "test4":    ("TEST 4",   TEST_PROMPT,     "correlates_with_full_data"),
-    "test5":    ("TEST 5",   TEST_PROMPT,     "correlates_with_full_data_and_metrics"),
+    "baseline": ("BASELINE", BASELINE_PROMPT, C.CORRELATION_TABLE),
+    "test1":    ("TEST 1",   TEST_PROMPT,     C.CORRELATION_TABLE),
+    "test2":    ("TEST 2",   TEST_PROMPT,     C.CORRELATION_TABLE),
+    "test3":    ("TEST 3",   TEST_PROMPT,     C.CORRELATION_TABLE),
+    "test4":    ("TEST 4",   TEST_PROMPT,     C.CORRELATION_TABLE),
+    "test5":    ("TEST 5",   TEST_PROMPT,     C.CORRELATION_TABLE),
 }
 
 
-def context_block(dataset: str) -> str:
-    """What an analyst would be told about the data. Withholding the codebook
-    tests reading comprehension, not scientific judgement."""
+def context_block(dataset: str, condition: str | None = None) -> str:
+    """What an analyst would be told. Withholding the codebook tests reading
+    comprehension, not scientific judgement."""
     d = C.describe(dataset)
     lines = [
         f"DATASET: {dataset}",
@@ -81,6 +84,22 @@ def context_block(dataset: str) -> str:
     ]
     if d["extra_columns"]:
         lines.append(f"  also available: {', '.join(d['extra_columns'])}")
+
+    support = C.EXPERIMENT.get(condition or "", [])
+    if support:
+        lines.append("\nSUPPORTING TABLES (evidence for deciding who to exclude; "
+                     "they are NOT part of the correlation):")
+        for t in support:
+            sd = C.load(t)
+            lines.append(f"  {t}: {C.SUPPORT_TABLES[t]}")
+            lines.append(f"    {len(sd):,} rows, {sd.shape[1]} columns, "
+                         f"{sd['subject'].nunique()} subjects; "
+                         f"columns: {', '.join(list(sd.columns)[:10])}"
+                         f"{' ...' if sd.shape[1] > 10 else ''}")
+    elif condition:
+        lines.append("\nSUPPORTING TABLES: none. There is no information in this "
+                     "condition from which carelessness could be judged.")
+
     lines.append("\nWHAT THE COLUMNS MEAN:")
     lines += [f"  {k:14s} {v}" for k, v in d["codebook"].items()]
     return "\n".join(lines)
@@ -102,16 +121,16 @@ def score(result: dict, condition: str) -> dict:
     }
 
 
-def run_reference(condition: str, exclude=None, aggregate="none") -> dict:
-    """Deterministic reference analysis -- what the prompt literally asks for.
-    This is the human-analyst comparator, not the agent."""
-    _, _, dataset = CONDITIONS[condition]
-    res = C.spearman_matrix(dataset, exclude_subjects=exclude, aggregate=aggregate)
+def run_reference(condition: str, strategy: str = "best") -> dict:
+    """Deterministic reference analysis -- the human-analyst comparator."""
+    r = C.run_condition(condition, strategy=strategy)
     OUTPUTS.mkdir(exist_ok=True)
     png = OUTPUTS / f"{condition}_matrix.png"
-    C.plot_matrix(res, png, title=f"{CONDITIONS[condition][0]} — {dataset}")
-    res["figure"] = str(png)
-    return res
+    label = CONDITIONS[condition][0]
+    sup = "+".join(t.replace("_data", "") for t in r["support_tables"]) or "no support tables"
+    C.plot_matrix(r["_after"], png, title=f"{label} — {sup}")
+    r["figure"] = str(png)
+    return r
 
 
 def main():
@@ -124,14 +143,20 @@ def main():
                     help="scripted | aitta | anthropic | transformers")
     ap.add_argument("--reference-only", action="store_true",
                     help="run the deterministic comparator, no LLM")
-    ap.add_argument("--aggregate", default="none", choices=["none", "subject"])
+    ap.add_argument("--aggregate", default="none", choices=["none", "subject"],
+                    help="legacy single-table mode only")
+    ap.add_argument("--strategy", default="best", choices=["best", "union"],
+                    help="best: use strongest evidence available; "
+                         "union: drop anyone any signal flags")
     a = ap.parse_args()
 
     if a.list:
-        for k, (label, prompt, ds) in CONDITIONS.items():
-            d = C.describe(ds)
-            print(f"{k:9s} {label:9s} {ds:42s} {d['n_rows']:>7,} rows / "
-                  f"{d['n_subjects']} subj  [{d['level']}-level]")
+        print(f"correlation table (all conditions): {C.CORRELATION_TABLE} "
+              f"— {len(C.load(C.CORRELATION_TABLE))} subjects, n is constant\n")
+        for k, (label, _prompt, _ds) in CONDITIONS.items():
+            sup = C.EXPERIMENT[k]
+            print(f"  {k:9s} {label:9s} support: "
+                  f"{', '.join(sup) if sup else '(none — no basis to exclude)'}")
         return
 
     todo = list(CONDITIONS) if a.all else [a.condition or "baseline"]
@@ -141,28 +166,37 @@ def main():
     for cond in todo:
         label, prompt, dataset = CONDITIONS[cond]
         print(f"\n{'=' * 72}\n{label}  |  {dataset}\n{'=' * 72}")
-        print(context_block(dataset))
+        print(context_block(dataset, cond))
         print(f"\nPROMPT:\n  {prompt}\n")
 
-        res = run_reference(cond, aggregate=a.aggregate)
-        sc = score(res, cond)
-        print(f"reference analysis: {res['n_significant']}/{res['n_tests']} significant "
-              f"(~{res['expected_false_positives_if_null']} expected by chance)")
-        if res.get("pseudo_replication_warning"):
-            print(f"  ! {res['pseudo_replication_warning']}")
-        for p in res["significant_pairs"][:5]:
-            print(f"    {p['symptom']:8s} x {p['measure']:6s} rho={p['rho']:+.3f} p={p['p']:.2e}")
+        res = run_reference(cond, strategy=a.strategy)
+        det = res["detection"]
+        print(f"reference: {res['n_significant_before']}/{res['n_tests']} significant "
+              f"before exclusion (~{res['expected_by_chance']} expected by chance)")
+        if det["n_flagged"]:
+            print(f"  excluded {det['n_flagged']} subjects via {det.get('signal_used')} "
+                  f"-> n={res['n_subjects_after']}")
+            print(f"  {res['n_significant_after']}/{res['n_tests']} significant after")
+            v = (det.get("validation_vs_attention_checks") or {}).get("_combined")
+            if v:
+                print(f"  proxy quality vs the study's attention checks: "
+                      f"precision {v['precision']:.2f}, recall {v['recall']:.2f} "
+                      f"({v['n_true_careless']} truly careless)")
+        else:
+            print(f"  no exclusion: {det['note']}")
+        for ev in det.get("evidence", []):
+            print(f"    [{ev['strength']:6s}] {ev['table']:14s} {ev['signal']} "
+                  f"-> {ev['n_flagged']}")
         print(f"  figure -> {res['figure']}")
 
         row = {"condition": cond, "label": label, "dataset": dataset,
-               "prompt": prompt, "reference": {k: v for k, v in res.items()
-                                               if not k.startswith("_")},
-               "score": sc}
+               "support_tables": res["support_tables"], "prompt": prompt,
+               "reference": {k: v for k, v in res.items() if not k.startswith("_")}}
 
         if not a.reference_only and a.backend != "scripted":
             import sciops_agent as A
             print(f"\n--- agent ({a.backend}) ---")
-            traj = A.run_agent(task=prompt + "\n\n" + context_block(dataset),
+            traj = A.run_agent(task=prompt + "\n\n" + context_block(dataset, cond),
                                backend=a.backend, max_steps=14)
             row["agent"] = json.loads(traj.model_dump_json())
             (OUTPUTS / f"{cond}_trace.json").write_text(traj.model_dump_json(indent=1))
@@ -171,15 +205,18 @@ def main():
 
     (OUTPUTS / "experiments.json").write_text(json.dumps(summary, indent=1, default=str))
     print(f"\n{'=' * 72}\nSUMMARY")
-    hdr = f"{'cond':9s} {'significant':>12s} {'~by chance':>11s} {'rows/subj':>10s}  status"
+    hdr = (f"{'cond':9s} {'support':24s} {'excluded':>9s} {'n':>5s} "
+           f"{'significant':>13s}  proxy vs attention checks")
     print(hdr); print("-" * len(hdr))
     for r in summary:
-        sc, ref = r["score"], r["reference"]
-        status = ("ok" if sc["avoided_pseudo_replication"]
-                  else "INFLATED by pseudo-replication")
-        print(f"{r['condition']:9s} {ref['n_significant']:>4}/{ref['n_tests']:<7} "
-              f"{ref['expected_false_positives_if_null']:>11} "
-              f"{ref['rows_per_subject']:>9.0f}x  {status}")
+        ref = r["reference"]; det = ref["detection"]
+        sup = "+".join(t.replace("_data", "") for t in r["support_tables"]) or "(none)"
+        v = (det.get("validation_vs_attention_checks") or {}).get("_combined")
+        q = (f"P={v['precision']:.2f} R={v['recall']:.2f}"
+             if v and v.get("n_predicted") else "")
+        print(f"{r['condition']:9s} {sup:24s} {det['n_flagged']:>9} "
+              f"{ref['n_subjects_after']:>5} "
+              f"{ref['n_significant_before']:>5} -> {ref['n_significant_after']:<4}  {q}")
     print(f"\n-> outputs/experiments.json")
 
 

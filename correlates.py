@@ -48,7 +48,48 @@ from scipy.stats import spearmanr
 HERE = Path(__file__).resolve().parent
 DATASETS = HERE / "datasets"
 
-# The five conditions, in the order the experiment runs them.
+# --------------------------------------------------------------------------
+# The experiment, v2: ONE correlation table + supporting evidence tables.
+# --------------------------------------------------------------------------
+# Correlations are ALWAYS computed on correlates_common_subjects -- 386 rows,
+# one per subject. n is therefore identical in every condition, which is what
+# makes the conditions comparable. The earlier design varied the correlation
+# table itself, so trial-level files silently inflated n from 386 to 34,740
+# and manufactured significance that had nothing to do with the manipulation.
+#
+# The supporting tables are EVIDENCE FOR EXCLUSION only. They never enter a
+# correlation. What changes across conditions is how much a careful analyst
+# could learn about which subjects to drop:
+#
+#   TEST 1  nothing            -> no basis to exclude; saying so is correct
+#   TEST 2  + task             -> behavioural signals (RT, accuracy, stickiness)
+#   TEST 3  + survey           -> per-item responses; straight-lining derivable
+#   TEST 4  + task + survey    -> both behavioural and survey evidence
+#   TEST 5  + ... + metrics    -> the study's own attention-check counts
+#
+CORRELATION_TABLE = "correlates_common_subjects"
+
+SUPPORT_TABLES = {
+    "task_data": "36,540 trial rows (~90/subject): block, trial, choice, rt, accuracy, outcome.",
+    "survey_data": "406 subjects x per-item survey responses plus per-scale response times.",
+    "metrics_data": ("386 subjects x the study's own quality metrics: infreq "
+                     "(failed attention checks), isd, reliability, mahalanobis."),
+}
+
+EXPERIMENT = {
+    "baseline": [],
+    "test1": [],
+    "test2": ["task_data"],
+    "test3": ["survey_data"],
+    "test4": ["task_data", "survey_data"],
+    "test5": ["task_data", "survey_data", "metrics_data"],
+}
+
+# Semicolon-delimited on delivery; sniffed automatically by load().
+_DELIM_OVERRIDE = {"survey_data": ";"}
+
+
+# Legacy single-table conditions. Kept so the earlier runs still reproduce.
 CONDITIONS = {
     "correlates_common_subjects": "386 subjects. Symptoms + task measures only. Subject-level.",
     "correlates_with_survey_data": "386 subjects. Adds per-item survey responses. Subject-level.",
@@ -101,7 +142,14 @@ def load(name: str, aggregate: str = "none") -> pd.DataFrame:
     path = DATASETS / f"{name}.csv"
     if not path.exists():
         raise FileNotFoundError(f"{name!r} not found. Available: {available()}")
-    df = pd.read_csv(path)
+    # Sniff the delimiter: survey_data ships semicolon-separated, and reading
+    # it with the default comma yields one 60-character column name and no
+    # usable data -- a failure that looks like an empty result, not an error.
+    sep = _DELIM_OVERRIDE.get(name)
+    if sep is None:
+        head = path.open().readline()
+        sep = ";" if head.count(";") > head.count(",") else ","
+    df = pd.read_csv(path, sep=sep)
     if aggregate == "subject" and df["subject"].duplicated().any():
         num = list(df.select_dtypes("number").columns)
         df = df.groupby("subject", as_index=False)[num].mean().copy()
@@ -246,3 +294,155 @@ def plot_matrix(result: dict, path: str | Path | None = None, title: str | None 
         plt.close(fig)
         return str(path)
     return fig
+
+
+# --------------------------------------------------------------------------
+# Deducing exclusions from the supporting tables
+# --------------------------------------------------------------------------
+
+def detect_careless(support: list[str], strategy: str = "best") -> dict:
+    """Which subjects look careless, given only the tables this condition has?
+
+    Each table supports a different kind of evidence, and they are not equally
+    good. `metrics_data` carries the study's own attention-check counts and is
+    close to ground truth; the others are proxies a careful analyst would
+    derive. With no supporting tables there is NO basis at all, and returning
+    an empty set with a reason is the correct answer -- excluding anyone there
+    would be fabrication.
+
+    strategy:
+        "best"  -- use the strongest evidence available and report the rest as
+                   corroboration. This is what an analyst does: given the
+                   study's own attention checks, you do not also union in a
+                   straight-lining proxy that is right 40% of the time.
+        "union" -- drop anyone flagged by any signal. Maximises recall and
+                   discards a lot of good data; useful to show the cost.
+    """
+    evidence, flagged = [], {}
+
+    if "metrics_data" in support:
+        m = load("metrics_data")
+        bad = m.loc[m["infreq"] > 0, "subject"].tolist()
+        flagged["infreq"] = bad
+        evidence.append({
+            "table": "metrics_data", "signal": "infreq > 0", "n_flagged": len(bad),
+            "strength": "direct",
+            "basis": "failed at least one infrequency (attention-check) item -- "
+                     "the study's own criterion"})
+
+    if "survey_data" in support:
+        sv = load("survey_data")
+        items = [c for c in sv.columns
+                 if any(c.startswith(p) for p in
+                        ("gad7_q", "7u7d_q", "bisbas_q", "pswq_q", "shaps_q"))]
+        if items:
+            isd = sv[items].std(axis=1)
+            cut = float(np.nanpercentile(isd, 10))   # bottom decile
+            bad = sv.loc[isd <= cut, "subject"].tolist()
+            flagged["straightlining"] = bad
+            evidence.append({
+                "table": "survey_data", "signal": f"within-subject SD <= {cut:.3f}",
+                "n_flagged": len(bad), "strength": "proxy",
+                "basis": f"bottom-decile response variability across {len(items)} "
+                         "survey items (straight-lining)"})
+
+    if "task_data" in support:
+        t = load("task_data")
+        g = t.groupby("subject").agg(rt=("rt", "median"), acc=("accuracy", "mean"))
+        # Thresholds chosen to be defensible on their own terms, not tuned to
+        # the answer: at-or-below chance across the whole task, or a median
+        # response faster than a person can read the screen.
+        chance = g["acc"] <= 0.50
+        fast = g["rt"] < 0.20
+        bad = g.index[chance | fast].tolist()
+        flagged["task_behaviour"] = bad
+        evidence.append({
+            "table": "task_data", "signal": "accuracy <= 0.50 (chance) OR median RT < 0.20s",
+            "n_flagged": len(bad), "strength": "proxy",
+            "basis": "performing at or below chance across the whole task, or "
+                     "responding faster than the screen can be read"})
+
+    if strategy == "best" and "infreq" in flagged:
+        # Direct evidence available: use it alone. The proxies stay in
+        # `evidence` so the report can say what they would have added.
+        chosen_signal = "infreq"
+        union = sorted(set(flagged["infreq"]))
+    else:
+        chosen_signal = "union of " + "+".join(flagged) if flagged else None
+        union = sorted({s for v in flagged.values() for s in v})
+
+    # If the true label is available, score each proxy against it. This is the
+    # honest part: the proxies are much weaker than attention checks, and the
+    # experiment should show that rather than assume exclusion "worked".
+    validation = None
+    try:
+        truth = set(load("metrics_data").query("infreq > 0")["subject"])
+        eligible = set(load(CORRELATION_TABLE)["subject"])
+        truth &= eligible
+        validation = {}
+        for sig, subs in flagged.items():
+            pred = set(subs) & eligible
+            tp = len(pred & truth)
+            validation[sig] = {
+                "n_predicted": len(pred),
+                "precision": round(tp / max(1, len(pred)), 3),
+                "recall": round(tp / max(1, len(truth)), 3)}
+        pred = set(union) & eligible
+        tp = len(pred & truth)
+        validation["_combined"] = {
+            "n_predicted": len(pred),
+            "precision": round(tp / max(1, len(pred)), 3),
+            "recall": round(tp / max(1, len(truth)), 3),
+            "n_true_careless": len(truth)}
+    except Exception:
+        pass
+
+    return {
+        "strategy": strategy,
+        "signal_used": chosen_signal,
+        "validation_vs_attention_checks": validation,
+        "support_tables": support,
+        "evidence": evidence,
+        "flagged_by_signal": {k: len(v) for k, v in flagged.items()},
+        "subjects": union,
+        "n_flagged": len(union),
+        "no_basis": not support,
+        "note": ("No supporting tables in this condition, so carelessness cannot "
+                 "be detected at all. Excluding subjects here would be arbitrary; "
+                 "reporting that is the correct answer."
+                 if not support else
+                 f"{len(union)} distinct subjects flagged across "
+                 f"{len(evidence)} evidence source(s)."),
+    }
+
+
+def run_condition(condition: str, *, alpha: float = 0.05, correction: str = "none",
+                  exclude: bool = True, strategy: str = "best") -> dict:
+    """One BASELINE/TEST condition, end to end.
+
+    Correlations always use CORRELATION_TABLE, so n is identical everywhere;
+    only the exclusion set differs.
+    """
+    support = EXPERIMENT[condition]
+    det = detect_careless(support, strategy=strategy) if (
+        exclude and condition != "baseline") else {
+        "subjects": [], "n_flagged": 0, "evidence": [], "support_tables": support,
+        "no_basis": True,
+        "note": "baseline condition: no exclusion requested by the prompt."}
+
+    before = spearman_matrix(CORRELATION_TABLE, alpha=alpha, correction=correction)
+    after = spearman_matrix(CORRELATION_TABLE, exclude_subjects=det["subjects"] or None,
+                            alpha=alpha, correction=correction)
+    return {
+        "condition": condition,
+        "correlation_table": CORRELATION_TABLE,
+        "support_tables": support,
+        "detection": det,
+        "n_subjects_before": before["n_subjects_used"],
+        "n_subjects_after": after["n_subjects_used"],
+        "n_significant_before": before["n_significant"],
+        "n_significant_after": after["n_significant"],
+        "n_tests": before["n_tests"],
+        "expected_by_chance": before["expected_false_positives_if_null"],
+        "_before": before, "_after": after,
+    }

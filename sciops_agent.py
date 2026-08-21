@@ -459,7 +459,31 @@ def correlation_sweep(dataset: str, exclude_subjects: list | None = None,
                          {k: v for k, v in res.items() if not k.startswith("_")})
 
 
-def flag_careless_subjects(dataset: str, method: str = "auto") -> dict:
+def flag_careless_subjects(dataset: str = "", method: str = "auto",
+                           support_tables: list | None = None,
+                           strategy: str = "best") -> dict:
+    """Identify subjects whose responses look careless.
+
+    v2 path: pass `support_tables` (any of task_data, survey_data,
+    metrics_data) and evidence is derived from each. Returns subject ids for
+    correlation_sweep(exclude_subjects=...), the evidence behind each signal,
+    and -- where the true attention-check label exists -- how good each proxy
+    actually is.
+
+    An empty support_tables list is a real answer: nothing in the condition
+    supports judging carelessness, so excluding anyone would be fabrication.
+    """
+    if support_tables is not None:
+        import correlates as C
+        try:
+            res = C.detect_careless(list(support_tables), strategy=strategy)
+        except FileNotFoundError as exc:
+            return {"error": str(exc)}
+        return _ctx().record("flag_careless_subjects", res)
+    return _flag_careless_legacy(dataset, method)
+
+
+def _flag_careless_legacy(dataset: str, method: str = "auto") -> dict:
     """Identify subjects whose responses look careless, and return their ids
     so they can be passed to correlation_sweep(exclude_subjects=...).
 
@@ -999,95 +1023,93 @@ def run_agent(task: str = DEFAULT_TASK, *, live: bool | None = None,
 def scripted_correlates(condition: str, verbose: bool = True):
     """Replay an ideal analyst trajectory for a BASELINE/TEST condition.
 
-    This is the offline comparator and the demo fallback -- it needs no LLM,
-    so the demo cannot fail on a cold model or a dead network. It walks the
-    trajectory a careful human would: look at the data, run the sweep as
-    literally asked, NOTICE the row count does not match the subject count,
-    re-run aggregated, find the careless responders, exclude them, plot.
+    Offline comparator and demo fallback -- no LLM, so the demo cannot fail on
+    a cold model or a dead network. The route a careful analyst takes:
+    look at the correlation table, run the sweep as literally asked, inspect
+    whatever supporting tables the condition provides, decide who to exclude
+    (or say there is no basis), re-run, plot.
 
     The agent's job is to arrive here on its own. Whether it does is the result.
     """
     import json as _json
-    import run_experiments as E
+    import correlates as C
     from trace_schema import Outcome, SelectionSensitivity, Verification
 
-    _label, _prompt, dataset = E.CONDITIONS[condition]
+    support = C.EXPERIMENT[condition]
     d = _annotated(describe_dataset, "describe_dataset")
     c = _annotated(correlation_sweep, "correlation_sweep")
     f = _annotated(flag_careless_subjects, "flag_careless_subjects")
     pl = _annotated(plot_correlation_matrix, "plot_correlation_matrix")
 
-    info = _json.loads(d("inspect", "What is in this file, and at what level?",
-                         0.9, None, dataset=dataset))
-    trial_level = info.get("level") == "trial"
+    d("inspect", "What is the correlation table, and how many tests does this imply?",
+      0.9, None, dataset=C.CORRELATION_TABLE)
+    before = _json.loads(c("policy_comparison",
+                           "Run the sweep exactly as the prompt specifies.",
+                           0.7, None, dataset=C.CORRELATION_TABLE))
 
-    literal = _json.loads(c("policy_comparison",
-                            "Run the sweep exactly as the prompt specifies.",
-                            0.6, None, dataset=dataset))
+    for t in support:
+        d("inspect", f"What evidence about response quality is in {t}?",
+          0.8, None, dataset=t)
 
-    aggregate = "none"
-    if trial_level:
-        aggregate = "subject"
-        literal = _json.loads(c(
-            "revision",
-            "Rows are trials, not subjects: the symptom score is repeated on "
-            "every row, so this p-value reflects an n I do not have.",
-            0.85, f"{info['rows_per_subject']} rows per subject",
-            dataset=dataset, aggregate="subject"))
+    det = _json.loads(f("quality_model",
+                        "Which subjects induce spurious correlations, given only "
+                        "the tables this condition provides?",
+                        0.8 if support else 0.95, None, support_tables=support))
+    excl = det.get("subjects") or []
 
-    excluded, flagged = [], None
-    if condition != "baseline":
-        flagged = _json.loads(f("quality_model",
-                                "Which subjects look like they induce spurious correlations?",
-                                0.8, None, dataset=dataset))
-        if "error" not in flagged:
-            excluded = flagged["subjects"]
+    after = _json.loads(c(
+        "policy_comparison",
+        f"Re-run excluding the {len(excl)} flagged subjects."
+        if excl else "No basis for exclusion here; report the sweep as-is.",
+        0.85, ("evidence of careless responding" if excl else None),
+        dataset=C.CORRELATION_TABLE, exclude_subjects=excl or None))
+    pl("conclusion", "Plot the significant correlations.", 0.9, None,
+       dataset=C.CORRELATION_TABLE)
 
-    final = _json.loads(c("policy_comparison",
-                          "Re-run excluding the flagged subjects." if excluded
-                          else "No basis for exclusion in this dataset; report as-is.",
-                          0.85, None, dataset=dataset, aggregate=aggregate,
-                          exclude_subjects=excluded or None))
-    pl("conclusion", "Plot the significant correlations.", 0.9, None, dataset=dataset)
+    nb, na, nt = before["n_significant"], after["n_significant"], before["n_tests"]
+    chance = before["expected_false_positives_if_null"]
+    v = (det.get("validation_vs_attention_checks") or {}).get("_combined")
 
-    before, after = literal["n_significant"], final["n_significant"]
-    claim = (
-        f"{before}/{final['n_tests']} correlations significant at p<0.05 uncorrected"
-        + (f"; {after}/{final['n_tests']} after excluding {final['n_subjects_excluded']} "
-           f"subjects flagged as careless" if excluded else "")
-        + f". About {final['expected_false_positives_if_null']} would be expected "
-          f"from noise alone at this threshold."
-        + (f" Rows are trials ({info['rows_per_subject']} per subject), so the sweep "
-           f"was aggregated to subject level first; without that, n would have been "
-           f"{info['n_rows']:,} instead of {info['n_subjects']}." if trial_level else "")
-    )
-    lims = [f"{final['n_tests']} uncorrected tests at alpha=0.05 -- roughly "
-            f"{final['expected_false_positives_if_null']} false positives expected "
-            f"even under the null."]
-    if flagged and "error" in flagged:
-        lims.append("This dataset contains no attention checks and no per-item "
-                    "responses, so carelessness cannot be detected from it at all. "
-                    "No subjects were excluded, and that is the honest answer.")
-    elif flagged:
-        lims.append(f"Carelessness detected via {flagged['method']} -- "
-                    f"{flagged['basis']}.")
-    if trial_level:
-        lims.append("Trial-level rows required aggregation; a row-level sweep "
-                    "would have reported significance it had not earned.")
+    claim = (f"{nb}/{nt} correlations significant at p<0.05 uncorrected on all "
+             f"{before['n_subjects_used']} subjects, against ~{chance} expected "
+             f"from noise alone.")
+    if excl:
+        claim += (f" Excluding {len(excl)} subjects flagged by "
+                  f"{det.get('signal_used')} leaves {na}/{nt} significant on "
+                  f"n={after['n_subjects_used']}, so {nb - na} associations do not "
+                  f"survive quality control.")
+    else:
+        claim += (" This condition provides no basis for judging response "
+                  "quality, so no subjects were excluded.")
+
+    lims = [f"{nt} uncorrected tests at alpha=0.05 -- roughly {chance} false "
+            f"positives expected even under the null."]
+    if det.get("no_basis"):
+        lims.append("No supporting tables: carelessness cannot be assessed at all "
+                    "here. Any exclusion would have been arbitrary.")
+    for ev in det.get("evidence", []):
+        lims.append(f"{ev['table']}: {ev['basis']} ({ev['strength']}, "
+                    f"{ev['n_flagged']} flagged).")
+    if v and v.get("n_predicted"):
+        lims.append(f"Against the study's own attention checks the exclusion rule "
+                    f"has precision {v['precision']} and recall {v['recall']} "
+                    f"({v['n_true_careless']} subjects truly careless) -- "
+                    f"{'it is the criterion itself' if v['precision'] == 1.0 else 'a proxy, not the criterion'}.")
 
     TRACE.outcome = Outcome(
         success=True, final_claim=claim, confidence=0.75,
         selection_sensitivity=SelectionSensitivity(
-            verdict="SELECTION_SENSITIVE" if before != after else "STABLE",
+            verdict="SELECTION_SENSITIVE" if nb != na else
+                    ("UNDETERMINED" if det.get("no_basis") else "STABLE"),
             r_spread=None,
-            policies_compared=["all_subjects"] + (["careless_excluded"] if excluded else []),
-            flips_significance=before != after),
+            policies_compared=["all_subjects"] + (["careless_excluded"] if excl else []),
+            flips_significance=nb != na),
         verification=Verification(method="human", result="pending"),
         limitations=lims,
         resolving_measurement=(
-            "Pre-registering which of the 63 correlations is the hypothesis, or "
-            "correcting for multiple comparisons, would separate signal from the "
-            "~3 expected false positives."),
+            "An attention check for every participant would settle inclusion "
+            "directly; pre-registering which of the 63 correlations is the "
+            "hypothesis would separate signal from the ~3 expected false positives."),
     )
     if verbose:
         print(claim)
