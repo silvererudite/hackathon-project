@@ -10,13 +10,12 @@ distinguish them; a per-step trace can.
 
 So every step records nine fields:
 
-    step_id, timestamp, phase, thought, action{type,tool,input,output},
+    step_id, timestamp, phase, thought, action{type,input,output},
     observation, error{occurred,type,message}, revision_trigger, confidence
 
 plus a trajectory-level `outcome` and `metadata` block. Errors are classified
-as tool_misuse | reasoning_error | hallucination, which separates "called the
-tool wrong" from "reasoned wrong" -- different problems needing different
-fixes.
+as code_error | reasoning_error | hallucination, separating generated-code
+failures from analytical reasoning failures.
 
 Two fields are specific to this project:
 
@@ -60,15 +59,17 @@ PHASE_MAP = {
     "conclusion": "conclusion",
 }
 
-FailureType = Literal["tool_misuse", "reasoning_error", "hallucination"]
-ActionType = Literal["tool_call", "reasoning", "conclude"]
+FailureType = Literal["code_error", "reasoning_error", "hallucination"]
+ActionType = Literal["tool_call", "code_execution", "reasoning", "conclude"]
+# Both agent designs write to this schema: the tool-calling agent emits
+# "tool_call", the code-writing agent emits "code_execution". Keeping both in
+# the vocabulary is what lets their traces sit side by side.
 
 
 # ---------------------------------------------------------------- step
 
 class Action(BaseModel):
     type: ActionType
-    tool: Optional[str] = None
     input: Optional[str] = None
     output: Optional[str] = None
 
@@ -138,6 +139,7 @@ class Outcome(BaseModel):
 class TrajectoryMetadata(BaseModel):
     total_steps: int = 0
     total_tool_calls: int = 0
+    total_code_executions: int = 0
     total_failures: int = 0
     total_revisions: int = 0
     wall_time_seconds: float = 0.0
@@ -170,7 +172,10 @@ class Trajectory(BaseModel):
     def recompute_metadata(self):
         m = self.metadata
         m.total_steps = len(self.trace)
-        m.total_tool_calls = sum(1 for s in self.trace if s.action.type == "tool_call")
+        m.total_tool_calls = sum(
+            1 for s in self.trace if s.action.type == "tool_call")
+        m.total_code_executions = sum(
+            1 for s in self.trace if s.action.type == "code_execution")
         m.total_failures = sum(1 for s in self.trace if s.error.occurred)
         m.total_revisions = sum(1 for s in self.trace if s.revision_trigger)
         m.wall_time_seconds = round(sum(s.wall_time or 0 for s in self.trace), 2)
@@ -181,7 +186,7 @@ class Trajectory(BaseModel):
         rating = f"  human {self.human_rating.rating}/5" if self.human_rating else ""
         sens = self.outcome.selection_sensitivity.verdict if self.outcome else "-"
         return (f"{self.trajectory_id}: {m.total_steps} steps, "
-                f"{m.total_tool_calls} tool calls, {m.total_failures} errors, "
+                f"{m.total_tool_calls} tool calls, {m.total_code_executions} code executions, {m.total_failures} errors, "
                 f"{m.total_revisions} revisions | {sens}{rating}")
 
 

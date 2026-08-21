@@ -2,8 +2,8 @@
 01_Original/
 02_Replication/
 
-# SECRETS — never commit. Aitta/Anthropic tokens go in the shell env,
-# not in a file inside the repo.
+# SECRETS — never commit. Aitta/Anthropic/OpenAI tokens stay local.
+config.py
 text.txt
 *.token
 .env
@@ -25,6 +25,8 @@ outputs/*.json
 outputs/*.txt
 
 # Python / Jupyter
+.venv/
 __pycache__/
-*.pyc
+*.py[cod]
 .ipynb_checkpoints/
+figures/
