@@ -196,8 +196,12 @@ def spearman_matrix(name: str, *, exclude_subjects: list | None = None,
     """
     df = load(name, aggregate=aggregate)
     n_before = df["subject"].nunique()
+    unmatched = []
     if exclude_subjects:
-        df = df[~df["subject"].isin(list(exclude_subjects))]
+        want = [str(x) for x in exclude_subjects]
+        known = set(df["subject"].astype(str))
+        unmatched = [x for x in want if x not in known]
+        df = df[~df["subject"].astype(str).isin(want)]
     n_after = df["subject"].nunique()
 
     syms = [c for c in SYMPTOMS if c in df.columns]
@@ -241,6 +245,15 @@ def spearman_matrix(name: str, *, exclude_subjects: list | None = None,
         "n_rows_used": int(n_used),
         "n_subjects_used": int(n_after),
         "n_subjects_excluded": int(n_before - n_after),
+        # Loud when an exclusion list matches nothing. Silence here is how an
+        # agent ends up reporting "I excluded 171 subjects" over an untouched
+        # sample: the call succeeds, the count is zero, and nothing complains.
+        "exclusion_warning": (
+            f"{len(unmatched)} of {len(exclude_subjects or [])} requested ids matched "
+            f"NO subject and were ignored (e.g. {unmatched[:3]}). Subject ids are "
+            f"strings like '02hfkd0x4jtnoiwsds69adoq' -- row numbers will not match."
+            if unmatched else None),
+        "n_ids_unmatched": len(unmatched),
         "rows_per_subject": round(n_used / max(1, n_after), 1),
         "pseudo_replication_warning": None if n_used == n_after else (
             f"correlations computed on {n_used:,} ROWS from {n_after} subjects; "

@@ -118,8 +118,12 @@ TOOL_SPECS = [
      "task-measure columns (9-17), with a two-sided significance test. Reports "
      "rows used AND subjects used separately.",
      _annot({"dataset": DATASET,
-             "exclude_subjects": {"type": "array", "items": {"type": "integer"},
-                                  "description": "subject ids to drop first"},
+             "exclude_subjects": {"type": "array", "items": {"type": "string"},
+                                  "description": "subject ids to drop first. These "
+                                                 "are STRINGS like "
+                                                 "'02hfkd0x4jtnoiwsds69adoq', not row "
+                                                 "numbers -- copy them verbatim from "
+                                                 "flag_careless_subjects."},
              "aggregate": {"type": "string", "enum": ["none", "subject"],
                            "description": "'subject' collapses repeated trial rows "
                                           "to one row per subject"},
