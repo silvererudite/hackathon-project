@@ -127,6 +127,44 @@ def run_agent_task(task: str, *, model: str | None, max_steps: int,
     return 0
 
 
+def run_experiment(cond: str, *, backend: str = "transformers",
+                   model: str | None = None, max_steps: int = 14) -> int:
+    """Run one BASELINE/TEST condition through the agent on this machine.
+
+    Identical on a laptop and on a GPU node -- only `backend` changes, so a
+    condition debugged locally with backend="scripted" runs unmodified in the
+    Slurm job with backend="transformers".
+    """
+    import run_experiments as E
+    import sciops_agent as A
+
+    label, prompt, dataset = E.CONDITIONS[cond]
+    ctx = E.context_block(dataset)
+    print(f"=== {label} | {dataset} | backend={backend} ===")
+    print(ctx)
+    print(f"\nPROMPT:\n  {prompt}\n")
+
+    if backend == "scripted":
+        from trace_schema import Trajectory, TrajectoryMetadata, now_iso
+        A.reset()
+        A.TRACE = Trajectory(trajectory_id=f"{cond}_scripted", prompt=prompt,
+                             model="scripted",
+                             metadata=TrajectoryMetadata(model_version="scripted",
+                                                         collection_timestamp=now_iso()))
+        traj = A.scripted_correlates(cond)
+        traj.recompute_metadata()
+    else:
+        traj = A.run_agent(task=prompt + "\n\n" + ctx, backend=backend,
+                           model=model, max_steps=max_steps,
+                           trajectory_id=f"{cond}_{backend}")
+    _ensure_dirs()
+    out = OUTPUTS / f"{cond}_{backend}_trace.json"
+    out.write_text(traj.model_dump_json(indent=1))
+    print(f"\n{traj.summary()}")
+    print(f"trace -> {out}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="BlueBEAR LLM task runner")
     parser.add_argument("--smoke-test", action="store_true",
@@ -146,10 +184,26 @@ def main() -> int:
                         help="Hugging Face model id")
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--trajectory-id", default=None)
+    parser.add_argument("--experiment", choices=["baseline", "test1", "test2",
+                                                 "test3", "test4", "test5"],
+                        help="run one BASELINE/TEST condition instead of --task")
+    parser.add_argument("--all-experiments", action="store_true",
+                        help="run every BASELINE/TEST condition in sequence")
     args = parser.parse_args()
 
     _ensure_dirs()
 
+    if args.all_experiments or args.experiment:
+        import run_experiments as E
+        backend = os.environ.get(
+            "SCIOPS_BACKEND",
+            "transformers" if os.environ.get("BLUEBEAR_LLM") else "scripted")
+        conds = list(E.CONDITIONS) if args.all_experiments else [args.experiment]
+        rc = 0
+        for c in conds:
+            rc |= run_experiment(c, backend=backend, model=args.model,
+                                 max_steps=args.max_steps)
+        return rc
     if args.check_data:
         from check_data import main as check_main
         return check_main()

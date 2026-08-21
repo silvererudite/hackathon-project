@@ -100,10 +100,48 @@ def _annot(extra: dict | None = None, required: list[str] | None = None) -> dict
             "additionalProperties": False}
 
 
+DATASET = {"type": "string",
+           "description": "dataset name, e.g. correlates_common_subjects, "
+                          "correlates_with_survey_data, "
+                          "correlates_with_full_data_and_metrics"}
 SYMPTOM = {"type": "string", "description": "symptom scale, e.g. gad7, 7u, 7d, pswq, bis, bas, shaps"}
 BEHAVIOUR = {"type": "string", "description": "behavioural measure: accuracy, wsls, or task_rt"}
 
 TOOL_SPECS = [
+    ("describe_dataset",
+     "Shape, level, column meanings, and how many tests the correlation sweep "
+     "implies. Call this first -- it tells you whether rows are subjects or "
+     "trials, which changes what a p-value means.",
+     _annot({"dataset": DATASET}, ["dataset"])),
+    ("correlation_sweep",
+     "Absolute Spearman correlations between the symptom columns (2-8) and the "
+     "task-measure columns (9-17), with a two-sided significance test. Reports "
+     "rows used AND subjects used separately.",
+     _annot({"dataset": DATASET,
+             "exclude_subjects": {"type": "array", "items": {"type": "integer"},
+                                  "description": "subject ids to drop first"},
+             "aggregate": {"type": "string", "enum": ["none", "subject"],
+                           "description": "'subject' collapses repeated trial rows "
+                                          "to one row per subject"},
+             "alpha": {"type": "number", "description": "significance threshold"},
+             "correction": {"type": "string", "enum": ["none", "bonferroni", "fdr"],
+                            "description": "multiple-comparison correction"}},
+            ["dataset"])),
+    ("flag_careless_subjects",
+     "Identify subjects whose responses look careless and return their ids for "
+     "exclude_subjects. Uses the study's attention-check count where available, "
+     "otherwise derives straight-lining from per-item survey responses. Returns "
+     "an error if the dataset supports neither -- that is a real answer, not a "
+     "failure to work around.",
+     _annot({"dataset": DATASET,
+             "method": {"type": "string", "enum": ["auto", "infreq", "survey"]}},
+            ["dataset"])),
+    ("plot_correlation_matrix",
+     "Plot the most recent correlation_sweep for a dataset as a matrix with "
+     "non-significant cells greyed out. Run correlation_sweep first.",
+     _annot({"dataset": DATASET,
+             "filename": {"type": "string", "description": "output png name"}},
+            ["dataset"])),
     ("inspect_data",
      "Summarise the sample: size, attention-check failure rate, available symptom "
      "scales and behavioural measures. Worth doing before forming any expectation.",

@@ -425,7 +425,111 @@ def transfer_selector() -> dict:
     })
 
 
+# --------------------------------------------------------------------------
+# Correlates tools -- for the BASELINE / TEST 1-5 human-vs-agent experiment
+# --------------------------------------------------------------------------
+
+def describe_dataset(dataset: str) -> dict:
+    """Shape, level, column meanings, and how many tests the sweep implies."""
+    import correlates as C
+    try:
+        return _ctx().record("describe_dataset", C.describe(dataset))
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
+
+
+def correlation_sweep(dataset: str, exclude_subjects: list | None = None,
+                      aggregate: str = "none", alpha: float = 0.05,
+                      correction: str = "none") -> dict:
+    """Absolute Spearman correlations, symptom columns x task-measure columns.
+
+    Reports n_rows_used AND n_subjects_used separately, plus a
+    pseudo_replication_warning when they differ, because a row-level
+    correlation on repeated per-subject rows reports a sample size it does
+    not have.
+    """
+    import correlates as C
+    try:
+        res = C.spearman_matrix(dataset, exclude_subjects=exclude_subjects,
+                                aggregate=aggregate, alpha=alpha, correction=correction)
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
+    _CORR_CACHE[dataset] = res
+    return _ctx().record("correlation_sweep",
+                         {k: v for k, v in res.items() if not k.startswith("_")})
+
+
+def flag_careless_subjects(dataset: str, method: str = "auto") -> dict:
+    """Identify subjects whose responses look careless, and return their ids
+    so they can be passed to correlation_sweep(exclude_subjects=...).
+
+    method: "infreq" uses the study's attention-check count (only available in
+    the *_metrics dataset); "survey" derives straight-lining from per-item
+    responses; "auto" uses whichever the dataset supports, and says so.
+    """
+    import numpy as np
+    import correlates as C
+    try:
+        df = C.load(dataset, aggregate="subject")
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
+
+    if method in ("auto", "infreq") and "infreq" in df.columns:
+        bad = df.loc[df["infreq"] > 0, "subject"].tolist()
+        return _ctx().record("flag_careless_subjects", {
+            "dataset": dataset, "method": "infreq",
+            "n_flagged": len(bad), "n_total": int(df["subject"].nunique()),
+            "pct": round(100 * len(bad) / max(1, df["subject"].nunique()), 1),
+            "subjects": bad,
+            "basis": "failed at least one infrequency (attention-check) item"})
+
+    item_cols = [c for c in df.columns if any(
+        c.startswith(p) for p in ("gad7_q", "shaps_q", "bisbas_q", "pswq_q", "7u7d_q"))]
+    if method in ("auto", "survey") and item_cols:
+        isd = df[item_cols].std(axis=1)
+        cut = float(np.nanpercentile(isd, 10))
+        bad = df.loc[isd <= cut, "subject"].tolist()
+        return _ctx().record("flag_careless_subjects", {
+            "dataset": dataset, "method": "survey_straightlining",
+            "n_flagged": len(bad), "n_total": int(df["subject"].nunique()),
+            "pct": round(100 * len(bad) / max(1, df["subject"].nunique()), 1),
+            "subjects": bad, "isd_cutoff": round(cut, 4),
+            "n_item_columns": len(item_cols),
+            "basis": "bottom-decile within-subject SD across survey items "
+                     "(straight-lining); a proxy, not the study's own label"})
+
+    return {"error": f"{dataset!r} has neither infrequency counts nor per-item "
+                     "survey columns, so carelessness cannot be detected from it",
+            "available_columns": [c for c in df.columns[:20]],
+            "hint": "this is an honest-failure condition -- say so rather than "
+                    "excluding subjects arbitrarily"}
+
+
+def plot_correlation_matrix(dataset: str, filename: str = "") -> dict:
+    """Plot the most recent correlation_sweep for this dataset as a matrix,
+    greying out non-significant cells. Run correlation_sweep first."""
+    import correlates as C
+    res = _CORR_CACHE.get(dataset)
+    if res is None:
+        return {"error": "no correlation_sweep run for this dataset yet"}
+    out = ROOT_OUT / (filename or f"{dataset}_matrix.png")
+    path = C.plot_matrix(res, out, title=dataset)
+    return _ctx().record("plot_correlation_matrix",
+                         {"dataset": dataset, "figure": path,
+                          "n_significant": res["n_significant"],
+                          "n_tests": res["n_tests"]})
+
+
+_CORR_CACHE: dict = {}
+ROOT_OUT = HERE / "outputs"
+ROOT_OUT.mkdir(exist_ok=True)
+
+
 TOOL_FUNCS = {
+    "describe_dataset": describe_dataset,
+    "correlation_sweep": correlation_sweep,
+    "flag_careless_subjects": flag_careless_subjects,
+    "plot_correlation_matrix": plot_correlation_matrix,
     "inspect_data": inspect_data,
     "train_quality_selector": train_quality_selector,
     "test_association": test_association,
@@ -696,6 +800,10 @@ def _dispatch_table():
         "request_quality_labels": _annotated(request_quality_labels, "request_quality_labels"),
         "check_replication": _annotated(check_replication, "check_replication"),
         "transfer_selector": _annotated(transfer_selector, "transfer_selector"),
+        "describe_dataset": _annotated(describe_dataset, "describe_dataset"),
+        "correlation_sweep": _annotated(correlation_sweep, "correlation_sweep"),
+        "flag_careless_subjects": _annotated(flag_careless_subjects, "flag_careless_subjects"),
+        "plot_correlation_matrix": _annotated(plot_correlation_matrix, "plot_correlation_matrix"),
     }
 
 
@@ -885,6 +993,104 @@ def run_agent(task: str = DEFAULT_TASK, *, live: bool | None = None,
     TRACE.metadata.wall_time_seconds = round(time.time() - t0, 2)
     if verbose:
         print(f"\n{'=' * 68}\n{TRACE.outcome.final_claim}")
+    return TRACE
+
+
+def scripted_correlates(condition: str, verbose: bool = True):
+    """Replay an ideal analyst trajectory for a BASELINE/TEST condition.
+
+    This is the offline comparator and the demo fallback -- it needs no LLM,
+    so the demo cannot fail on a cold model or a dead network. It walks the
+    trajectory a careful human would: look at the data, run the sweep as
+    literally asked, NOTICE the row count does not match the subject count,
+    re-run aggregated, find the careless responders, exclude them, plot.
+
+    The agent's job is to arrive here on its own. Whether it does is the result.
+    """
+    import json as _json
+    import run_experiments as E
+    from trace_schema import Outcome, SelectionSensitivity, Verification
+
+    _label, _prompt, dataset = E.CONDITIONS[condition]
+    d = _annotated(describe_dataset, "describe_dataset")
+    c = _annotated(correlation_sweep, "correlation_sweep")
+    f = _annotated(flag_careless_subjects, "flag_careless_subjects")
+    pl = _annotated(plot_correlation_matrix, "plot_correlation_matrix")
+
+    info = _json.loads(d("inspect", "What is in this file, and at what level?",
+                         0.9, None, dataset=dataset))
+    trial_level = info.get("level") == "trial"
+
+    literal = _json.loads(c("policy_comparison",
+                            "Run the sweep exactly as the prompt specifies.",
+                            0.6, None, dataset=dataset))
+
+    aggregate = "none"
+    if trial_level:
+        aggregate = "subject"
+        literal = _json.loads(c(
+            "revision",
+            "Rows are trials, not subjects: the symptom score is repeated on "
+            "every row, so this p-value reflects an n I do not have.",
+            0.85, f"{info['rows_per_subject']} rows per subject",
+            dataset=dataset, aggregate="subject"))
+
+    excluded, flagged = [], None
+    if condition != "baseline":
+        flagged = _json.loads(f("quality_model",
+                                "Which subjects look like they induce spurious correlations?",
+                                0.8, None, dataset=dataset))
+        if "error" not in flagged:
+            excluded = flagged["subjects"]
+
+    final = _json.loads(c("policy_comparison",
+                          "Re-run excluding the flagged subjects." if excluded
+                          else "No basis for exclusion in this dataset; report as-is.",
+                          0.85, None, dataset=dataset, aggregate=aggregate,
+                          exclude_subjects=excluded or None))
+    pl("conclusion", "Plot the significant correlations.", 0.9, None, dataset=dataset)
+
+    before, after = literal["n_significant"], final["n_significant"]
+    claim = (
+        f"{before}/{final['n_tests']} correlations significant at p<0.05 uncorrected"
+        + (f"; {after}/{final['n_tests']} after excluding {final['n_subjects_excluded']} "
+           f"subjects flagged as careless" if excluded else "")
+        + f". About {final['expected_false_positives_if_null']} would be expected "
+          f"from noise alone at this threshold."
+        + (f" Rows are trials ({info['rows_per_subject']} per subject), so the sweep "
+           f"was aggregated to subject level first; without that, n would have been "
+           f"{info['n_rows']:,} instead of {info['n_subjects']}." if trial_level else "")
+    )
+    lims = [f"{final['n_tests']} uncorrected tests at alpha=0.05 -- roughly "
+            f"{final['expected_false_positives_if_null']} false positives expected "
+            f"even under the null."]
+    if flagged and "error" in flagged:
+        lims.append("This dataset contains no attention checks and no per-item "
+                    "responses, so carelessness cannot be detected from it at all. "
+                    "No subjects were excluded, and that is the honest answer.")
+    elif flagged:
+        lims.append(f"Carelessness detected via {flagged['method']} -- "
+                    f"{flagged['basis']}.")
+    if trial_level:
+        lims.append("Trial-level rows required aggregation; a row-level sweep "
+                    "would have reported significance it had not earned.")
+
+    TRACE.outcome = Outcome(
+        success=True, final_claim=claim, confidence=0.75,
+        selection_sensitivity=SelectionSensitivity(
+            verdict="SELECTION_SENSITIVE" if before != after else "STABLE",
+            r_spread=None,
+            policies_compared=["all_subjects"] + (["careless_excluded"] if excluded else []),
+            flips_significance=before != after),
+        verification=Verification(method="human", result="pending"),
+        limitations=lims,
+        resolving_measurement=(
+            "Pre-registering which of the 63 correlations is the hypothesis, or "
+            "correcting for multiple comparisons, would separate signal from the "
+            "~3 expected false positives."),
+    )
+    if verbose:
+        print(claim)
     return TRACE
 
 
