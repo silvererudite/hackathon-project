@@ -271,32 +271,53 @@ txt(s, 1.12, fy + 0.38, 11.1, 0.4,
 s = prs.slides.add_slide(BLANK); bg(s)
 header(s, "05", "Aggregate Results", accent=TEAL)
 
-txt(s, 8.30, 1.72, 4.15, 0.26, "Reference — paper", size=9.5, font=MONO,
+# Framing line, left of the reference figure -- fills the gap that used to sit
+# empty under the section label.
+txt(s, 0.85, 1.70, 6.9, 0.26, "Reference — Zorowitz et al.", size=9.5, font=MONO,
     color=MUTED, space=1.3, caps=True)
-box(s, 8.30, 2.02, 4.15, 1.35, CARD, line=RULE)
-s.shapes.add_picture(f"{IMG}/s6_2.png", Inches(8.38), Inches(2.09), width=Inches(3.99))
+txt(s, 0.85, 2.04, 6.85, 1.2,
+    [("The paper's own result: ", {"color": INK2}),
+     ("correlations that look significant under no screening largely vanish once "
+      "inattentive participants are removed.", {"bold": True}),
+     ("  Our five conditions reproduce that sweep while varying only how much "
+      "evidence the agent has for spotting them.", {"color": INK2})],
+    size=12.5, color=INK)
 
-txt(s, 0.85, 1.72, 7.0, 0.26, "Ours — five data conditions", size=9.5, font=MONO,
-    color=MUTED, space=1.3, caps=True)
-labels = ["baseline", "test 2", "test 3", "test 4", "test 5"]
-files = ["s6_3.png", "s6_4.png", "s6_5.png", "s6_6.png", "s6_7.png"]
-x0, w, gap = 0.85, 2.28, 0.11
-for i, (f, lab) in enumerate(zip(files, labels)):
+box(s, 8.05, 1.98, 4.40, 1.44, CARD, line=RULE)
+s.shapes.add_picture(f"{IMG}/s6_2.png", Inches(8.14), Inches(2.05), width=Inches(4.22))
+
+box(s, 0.85, 3.60, 11.6, 0.014, RULE)
+txt(s, 0.85, 3.76, 7.0, 0.26, "Ours — significant correlations remaining",
+    size=9.5, font=MONO, color=MUTED, space=1.3, caps=True)
+
+# Five conditions as a sequence: figure, count, label. The axis text is not
+# legible at this size and does not need to be -- the shrinking block of
+# coloured cells and the count under it are what carry the row.
+conds = [("crop_s6_3.png", "25", "baseline", "no screening"),
+         ("crop_s6_4.png", "13", "test 2", "task"),
+         ("crop_s6_5.png", "23", "test 3", "survey"),
+         ("crop_s6_6.png", "13", "test 4", "task + survey"),
+         ("crop_s6_7.png", "11", "test 5", "+ metrics")]
+x0, w, gap = 0.85, 2.24, 0.10
+for i, (f, n, lab, ev) in enumerate(conds):
     cx = x0 + i * (w + gap)
-    box(s, cx, 3.72, w, 1.62, CARD, line=RULE)
-    s.shapes.add_picture(f"{IMG}/{f}", Inches(cx + 0.05), Inches(3.77), width=Inches(w - 0.10))
-    txt(s, cx, 5.42, w, 0.25, lab, size=8.5, font=MONO, color=MUTED,
-        align=PP_ALIGN.CENTER, caps=True, space=1.1)
+    last = (i == len(conds) - 1)
+    box(s, cx, 4.02, w, 1.78, CARD, line=TEAL if last else RULE)
+    s.shapes.add_picture(f"{IMG}/{f}", Inches(cx + 0.07), Inches(4.09), width=Inches(w - 0.14))
+    txt(s, cx, 5.90, w, 0.42, [(n, {"size": 21, "bold": True,
+                                    "color": TEAL if last else INK, "font": MONO}),
+                               ("/63", {"size": 12, "color": MUTED, "font": MONO})],
+        align=PP_ALIGN.CENTER)
+    txt(s, cx, 6.34, w, 0.24, lab, size=9.5, font=MONO, bold=True,
+        color=INK if last else INK2, align=PP_ALIGN.CENTER, caps=True, space=1.1)
+    txt(s, cx, 6.58, w, 0.24, ev, size=9, color=MUTED, align=PP_ALIGN.CENTER)
 
-box(s, 0.85, 5.86, 11.6, 0.014, RULE)
-txt(s, 0.85, 6.06, 11.6, 0.9,
-    [("25 of 63 correlations are significant on all 386 subjects", {"bold": True}),
-     (" — about three are expected from noise alone. Excluding the 85 participants "
-      "who failed an attention check leaves ", {"color": INK2}),
-     ("11", {"bold": True}),
-     (". Fourteen of the original findings do not survive quality control.",
-      {"color": INK2})],
-    size=13, color=INK)
+box(s, 0.85, 6.92, 11.6, 0.014, RULE)
+txt(s, 0.85, 7.06, 11.6, 0.3,
+    [("~3 of 63 are expected by chance.", {"bold": True}),
+     ("  Excluding the 85 who failed an attention check leaves 11 — fourteen "
+      "findings do not survive quality control.", {"color": INK2})],
+    size=10.5, color=INK)
 
 # ============================================================ 7  RESULTS
 s = prs.slides.add_slide(BLANK); bg(s)
